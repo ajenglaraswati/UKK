@@ -1,0 +1,41 @@
+CREATE DATABASE digital_store;
+USE digital_store;
+
+CREATE TABLE products (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    name VARCHAR(255) NOT NULL,
+    description TEXT,
+    price DECIMAL(10,2) NOT NULL,
+    file_path VARCHAR(500),
+    icon VARCHAR(50) DEFAULT 'file-alt',
+    featured BOOLEAN DEFAULT FALSE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE orders (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    customer_name VARCHAR(255) NOT NULL,
+    customer_email VARCHAR(255) NOT NULL,
+    total_amount DECIMAL(10,2) NOT NULL,
+    payment_method VARCHAR(50) NOT NULL,
+    status ENUM('pending', 'paid', 'completed') DEFAULT 'pending',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE order_items (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    order_id INT,
+    product_id INT,
+    product_name VARCHAR(255),
+    price DECIMAL(10,2),
+    quantity INT,
+    FOREIGN KEY (order_id) REFERENCES orders(id)
+);
+
+-- Sample data
+INSERT INTO products (name, description, price, icon, featured) VALUES
+('Template Website Premium', 'Template website modern dengan desain responsif', 250000, 'desktop', 1),
+('UI Kit Mobile App', 'Koleksi komponen UI untuk aplikasi mobile', 180000, 'mobile', 1),
+('Icon Set Professional', '500+ ikon vektor dengan berbagai kategori', 120000, 'icons', 1),
+('Font Family Modern', 'Keluarga font modern untuk proyek desain', 150000, 'font', 0),
+('Mockup Branding', 'Template mockup untuk presentasi branding', 200000, 'image', 0);
