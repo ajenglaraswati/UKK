@@ -13,6 +13,20 @@ $user_id = $_SESSION['user']['id'];
 $error = '';
 $success = '';
 
+// Get product ID from URL
+$product_id = isset($_GET['id']) ? (int)$_GET['id'] : 0;
+
+// Fetch product data
+$stmt = $pdo->prepare("SELECT * FROM products WHERE id = ? AND seller_id = ?");
+$stmt->execute([$product_id, $user_id]);
+$product = $stmt->fetch();
+
+if (!$product) {
+    $_SESSION['error_message'] = "Product not found or you don't have permission to edit it.";
+    header('Location: manage-products.php');
+    exit();
+}
+
 // Handle form submission
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $category = $_POST['category'];
@@ -22,6 +36,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $price = floatval($price);
     $icon = $_POST['icon'];
     $file_link = trim($_POST['file_link']);
+    $featured = isset($_POST['featured']) ? 1 : 0;
     
     // Validation
     if (empty($category) || empty($name) || empty($description) || empty($price) || empty($icon) || empty($file_link)) {
@@ -32,8 +47,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $error = 'Please enter a valid URL for the product file.';
     } else {
         try {
-            // Handle file upload
-            $image_name = null;
+            // Handle file upload for new image
+            $image_name = $product['image']; // Keep old image by default
+            
             if (isset($_FILES['product_image']) && $_FILES['product_image']['error'] === UPLOAD_ERR_OK) {
                 $upload_dir = '../uploads/products/';
                 
@@ -56,6 +72,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $error = "Only JPG, JPEG, PNG, GIF & WEBP files are allowed.";
                 } else {
                     if (move_uploaded_file($_FILES['product_image']['tmp_name'], $target_file)) {
+                        // Hapus gambar lama jika ada
+                        if (!empty($product['image']) && file_exists($upload_dir . $product['image'])) {
+                            unlink($upload_dir . $product['image']);
+                        }
                         $image_name = $file_name;
                     } else {
                         $error = "Failed to upload image.";
@@ -63,24 +83,44 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 }
             }
             
+            // Handle remove image
+            if (isset($_POST['remove_image']) && $_POST['remove_image'] == '1') {
+                if (!empty($product['image']) && file_exists('../uploads/products/' . $product['image'])) {
+                    unlink('../uploads/products/' . $product['image']);
+                }
+                $image_name = null;
+            }
+            
             if (empty($error)) {
-                // Insert product with image and file link
-                $stmt = $pdo->prepare("INSERT INTO products (seller_id, category, name, description, price, icon, image, file_link, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW())");
-                $stmt->execute([$user_id, $category, $name, $description, $price, $icon, $image_name, $file_link]);
+                // Update product - HAPUS bagian updated_at
+                $stmt = $pdo->prepare("
+                    UPDATE products SET 
+                        category = ?, 
+                        name = ?, 
+                        description = ?, 
+                        price = ?, 
+                        icon = ?, 
+                        image = ?, 
+                        file_link = ?, 
+                        featured = ?
+                    WHERE id = ? AND seller_id = ?
+                ");
+                $stmt->execute([$category, $name, $description, $price, $icon, $image_name, $file_link, $featured, $product_id, $user_id]);
                 
-                $product_id = $pdo->lastInsertId();
-                $success = 'Product added successfully!';
+                $success = 'Product updated successfully!';
                 
-                // Clear form
-                $_POST = array();
+                // Refresh product data
+                $stmt = $pdo->prepare("SELECT * FROM products WHERE id = ? AND seller_id = ?");
+                $stmt->execute([$product_id, $user_id]);
+                $product = $stmt->fetch();
             }
         } catch (PDOException $e) {
-            $error = 'Error adding product: ' . $e->getMessage();
+            $error = 'Error updating product: ' . $e->getMessage();
         }
     }
 }
 
-// Get categories from database or use predefined
+// Get categories
 $categories = [
     'ui-ux' => 'UI/UX Design',
     'graphic' => 'Graphic Design',
@@ -93,6 +133,20 @@ $categories = [
     'audio' => 'Audio Assets',
     'code' => 'Code & Scripts'
 ];
+
+// Get icons
+$icons = [
+    'palette' => 'Design',
+    'mobile-alt' => 'Mobile',
+    'laptop-code' => 'Web',
+    'paint-brush' => 'Art',
+    'image' => 'Image',
+    'font' => 'Font',
+    'cube' => '3D',
+    'video' => 'Video',
+    'music' => 'Audio',
+    'code' => 'Code'
+];
 ?>
 
 <!DOCTYPE html>
@@ -100,7 +154,7 @@ $categories = [
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Add Product - Kreava Seller</title>
+    <title>Edit Product - Kreava Seller</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
@@ -122,7 +176,7 @@ $categories = [
             flex-direction: column;
         }
 
-        /* Navigation - SAMA PERSIS DENGAN SEBELUMNYA */
+        /* Navigation */
         .navbar {
             position: sticky;
             top: 0;
@@ -324,8 +378,21 @@ $categories = [
 
         /* Page Header */
         .page-header {
-            text-align: center;
             margin-bottom: 2rem;
+        }
+
+        .back-link {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            color: #0284c7;
+            text-decoration: none;
+            font-weight: 500;
+            margin-bottom: 1rem;
+        }
+
+        .back-link:hover {
+            text-decoration: underline;
         }
 
         .page-title {
@@ -481,6 +548,46 @@ $categories = [
         }
 
         /* File Upload */
+        .current-image {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+            padding: 1rem;
+            background: #f0f9ff;
+            border-radius: 12px;
+            border: 1px solid #bae6fd;
+            margin-bottom: 1rem;
+        }
+
+        .current-image img {
+            width: 80px;
+            height: 80px;
+            border-radius: 8px;
+            object-fit: cover;
+        }
+
+        .current-image-info {
+            flex: 1;
+        }
+
+        .current-image-info h4 {
+            font-size: 0.95rem;
+            font-weight: 600;
+            color: #0f172a;
+            margin-bottom: 0.25rem;
+        }
+
+        .current-image-info p {
+            color: #64748b;
+            font-size: 0.85rem;
+        }
+
+        .remove-image {
+            color: #ef4444;
+            cursor: pointer;
+            font-size: 1.2rem;
+        }
+
         .file-upload {
             border: 2px dashed #e2e8f0;
             border-radius: 12px;
@@ -622,73 +729,37 @@ $categories = [
             font-size: 1rem;
         }
 
-        /* Preview Section */
-        .preview-section {
-            margin-top: 2rem;
-            padding-top: 2rem;
-            border-top: 1px solid #e2e8f0;
-        }
-
-        .preview-card {
-            background: linear-gradient(135deg, #f8fafc, #f1f5f9);
-            border-radius: 20px;
-            padding: 1.5rem;
+        /* Checkbox */
+        .checkbox-group {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+            padding: 0.8rem 1rem;
+            background: #f8fafc;
             border: 1px solid #e2e8f0;
-            margin-top: 1rem;
+            border-radius: 12px;
         }
 
-        .preview-header {
+        .checkbox {
             display: flex;
-            justify-content: space-between;
             align-items: center;
-            margin-bottom: 1rem;
+            gap: 0.5rem;
+            cursor: pointer;
         }
 
-        .preview-icon {
-            width: 60px;
-            height: 60px;
-            background: linear-gradient(135deg, #0284c7, #38bdf8);
-            border-radius: 16px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
+        .checkbox input {
+            width: 18px;
+            height: 18px;
+            accent-color: #0284c7;
+        }
+
+        .featured-badge {
+            background: linear-gradient(135deg, #f97316, #fb923c);
             color: white;
-            font-size: 1.8rem;
-        }
-
-        .preview-category-badge {
-            background: #e0f2fe;
-            color: #0284c7;
-            padding: 0.3rem 1rem;
+            padding: 0.2rem 0.8rem;
             border-radius: 30px;
-            font-size: 0.8rem;
+            font-size: 0.7rem;
             font-weight: 600;
-        }
-
-        .preview-title {
-            font-size: 1.3rem;
-            font-weight: 600;
-            color: #0f172a;
-            margin-bottom: 0.5rem;
-        }
-
-        .preview-description {
-            color: #475569;
-            line-height: 1.6;
-            margin-bottom: 1rem;
-            font-size: 0.9rem;
-        }
-
-        .preview-footer {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-        }
-
-        .preview-price {
-            font-size: 1.5rem;
-            font-weight: 700;
-            color: #0284c7;
         }
 
         /* Form Actions */
@@ -735,6 +806,17 @@ $categories = [
         .btn-secondary:hover {
             border-color: #0284c7;
             color: #0284c7;
+        }
+
+        .btn-danger {
+            background: white;
+            color: #ef4444;
+            border: 1px solid #ef4444;
+        }
+
+        .btn-danger:hover {
+            background: #ef4444;
+            color: white;
         }
 
         /* Footer */
@@ -844,17 +926,6 @@ $categories = [
 
         /* Responsive */
         @media (max-width: 768px) {
-            .nav-container {
-                flex-direction: column;
-                gap: 1rem;
-            }
-
-            .nav-links {
-                flex-wrap: wrap;
-                justify-content: center;
-                gap: 1.5rem;
-            }
-
             .form-grid {
                 grid-template-columns: 1fr;
                 gap: 1rem;
@@ -867,6 +938,17 @@ $categories = [
             .btn {
                 width: 100%;
                 justify-content: center;
+            }
+
+            .nav-container {
+                flex-direction: column;
+                gap: 1rem;
+            }
+
+            .nav-links {
+                flex-wrap: wrap;
+                justify-content: center;
+                gap: 1.5rem;
             }
 
             .footer-grid {
@@ -882,7 +964,7 @@ $categories = [
     </style>
 </head>
 <body>
-    <!-- Navigation - SAMA PERSIS DENGAN SEBELUMNYA -->
+    <!-- Navigation -->
     <nav class="navbar">
         <div class="nav-container">
             <a href="../index.php" class="logo">
@@ -894,7 +976,8 @@ $categories = [
                 <a href="../index.php">Home</a>
                 <a href="../products.php">Products</a>
                 <a href="dashboard.php">Dashboard</a>
-                <a href="add-product.php" class="active">Add Product</a>
+                <a href="manage-products.php">Manage Products</a>
+                <a href="add-product.php">Add Product</a>
             </div>
 
             <div class="nav-buttons">
@@ -915,7 +998,7 @@ $categories = [
                             <i class="fas fa-store"></i>
                             Dashboard
                         </a>
-                        <a href="products.php" class="dropdown-item">
+                        <a href="manage-products.php" class="dropdown-item">
                             <i class="fas fa-cube"></i>
                             My Products
                         </a>
@@ -944,28 +1027,32 @@ $categories = [
 
     <main>
         <div class="container">
-            <!-- Page Header -->
+            <!-- Back Link -->
             <div class="page-header">
-                <h1 class="page-title">Add New Product</h1>
-                <p class="page-subtitle">Create a new product listing to start selling on Kreava</p>
+                <a href="manage-products.php" class="back-link">
+                    <i class="fas fa-arrow-left"></i>
+                    Back to Manage Products
+                </a>
+                <h1 class="page-title">Edit Product</h1>
+                <p class="page-subtitle">Update your product information</p>
             </div>
 
             <!-- Alerts -->
-            <?php if($error): ?>
+            <?php if ($error): ?>
                 <div class="alert alert-error">
                     <i class="fas fa-exclamation-circle"></i>
                     <?php echo $error; ?>
                 </div>
             <?php endif; ?>
 
-            <?php if($success): ?>
+            <?php if ($success): ?>
                 <div class="alert alert-success">
                     <i class="fas fa-check-circle"></i>
                     <?php echo $success; ?>
                 </div>
             <?php endif; ?>
 
-            <!-- Product Form -->
+            <!-- Edit Form -->
             <form method="POST" enctype="multipart/form-data" class="form-container">
                 <div class="form-grid">
                     <!-- Left Column - Basic Info -->
@@ -975,7 +1062,7 @@ $categories = [
                             Basic Information
                         </h3>
 
-                        <!-- Category pertama -->
+                        <!-- Category -->
                         <div class="form-group">
                             <label class="form-label required">
                                 <i class="fas fa-folder"></i>
@@ -984,7 +1071,7 @@ $categories = [
                             <select name="category" class="form-select" required>
                                 <option value="">Select Category</option>
                                 <?php foreach ($categories as $value => $label): ?>
-                                <option value="<?php echo $value; ?>" <?php echo ($_POST['category'] ?? '') === $value ? 'selected' : ''; ?>>
+                                <option value="<?php echo $value; ?>" <?php echo ($product['category'] ?? '') === $value ? 'selected' : ''; ?>>
                                     <?php echo $label; ?>
                                 </option>
                                 <?php endforeach; ?>
@@ -997,7 +1084,7 @@ $categories = [
                                 Product Name
                             </label>
                             <input type="text" name="name" class="form-input" 
-                                   value="<?php echo htmlspecialchars($_POST['name'] ?? ''); ?>" 
+                                   value="<?php echo htmlspecialchars($product['name']); ?>" 
                                    placeholder="e.g. Modern UI Kit" required maxlength="100">
                             <div class="char-count">Max 100 characters</div>
                         </div>
@@ -1009,7 +1096,7 @@ $categories = [
                             </label>
                             <textarea name="description" class="form-textarea" 
                                       placeholder="Describe your product in detail..." 
-                                      required maxlength="1000"><?php echo htmlspecialchars($_POST['description'] ?? ''); ?></textarea>
+                                      required maxlength="1000"><?php echo htmlspecialchars($product['description']); ?></textarea>
                             <div class="char-count">Max 1000 characters</div>
                         </div>
 
@@ -1021,9 +1108,19 @@ $categories = [
                             <div class="price-input-wrapper">
                                 <span class="price-prefix">Rp</span>
                                 <input type="text" name="price" class="form-input price-input" id="price-input"
-                                       value="<?php echo isset($_POST['price']) ? number_format($_POST['price'], 0, ',', '.') : ''; ?>" 
+                                       value="<?php echo number_format($product['price'], 0, ',', '.'); ?>" 
                                        placeholder="150.000" required onkeyup="formatPrice(this)">
                             </div>
+                        </div>
+
+                        <!-- Featured Checkbox -->
+                        <div class="checkbox-group">
+                            <label class="checkbox">
+                                <input type="checkbox" name="featured" value="1" 
+                                       <?php echo $product['featured'] ? 'checked' : ''; ?>>
+                                <span>Feature this product</span>
+                            </label>
+                            <span class="featured-badge">Featured</span>
                         </div>
                     </div>
 
@@ -1039,9 +1136,26 @@ $categories = [
                                 <i class="fas fa-camera"></i>
                                 Product Image
                             </label>
+                            
+                            <!-- Current Image -->
+                            <?php if (!empty($product['image']) && file_exists('../uploads/products/' . $product['image'])): ?>
+                            <div class="current-image">
+                                <img src="../uploads/products/<?php echo $product['image']; ?>" alt="Current product image">
+                                <div class="current-image-info">
+                                    <h4>Current Image</h4>
+                                    <p><?php echo $product['image']; ?></p>
+                                </div>
+                                <label class="remove-image">
+                                    <input type="checkbox" name="remove_image" value="1" style="display: none;">
+                                    <i class="fas fa-times-circle" onclick="toggleRemoveImage(this)"></i>
+                                </label>
+                            </div>
+                            <?php endif; ?>
+
+                            <!-- Upload New Image -->
                             <div class="file-upload" onclick="document.getElementById('product_image').click()">
                                 <i class="fas fa-cloud-upload-alt"></i>
-                                <p>Click to upload product image</p>
+                                <p>Click to upload new image</p>
                                 <small>Supports: JPG, PNG, GIF, WEBP (Max 5MB)</small>
                             </div>
                             <input type="file" name="product_image" id="product_image" accept="image/*" style="display: none;" onchange="handleFileSelect(this)">
@@ -1066,24 +1180,10 @@ $categories = [
                                 Icon
                             </label>
                             <div class="icon-selection">
-                                <?php
-                                $icons = [
-                                    'palette' => 'Design',
-                                    'mobile-alt' => 'Mobile',
-                                    'laptop-code' => 'Web',
-                                    'paint-brush' => 'Art',
-                                    'image' => 'Image',
-                                    'font' => 'Font',
-                                    'cube' => '3D',
-                                    'video' => 'Video',
-                                    'music' => 'Audio',
-                                    'code' => 'Code'
-                                ];
-                                foreach ($icons as $icon => $name):
-                                ?>
+                                <?php foreach ($icons as $icon => $name): ?>
                                 <label class="icon-option">
                                     <input type="radio" name="icon" value="<?php echo $icon; ?>" 
-                                           <?php echo ($_POST['icon'] ?? 'palette') === $icon ? 'checked' : ''; ?> required>
+                                           <?php echo ($product['icon'] ?? 'palette') === $icon ? 'checked' : ''; ?> required>
                                     <div class="icon-preview">
                                         <i class="fas fa-<?php echo $icon; ?>"></i>
                                     </div>
@@ -1100,7 +1200,7 @@ $categories = [
                                 Product File URL
                             </label>
                             <input type="url" name="file_link" class="form-input" 
-                                   value="<?php echo htmlspecialchars($_POST['file_link'] ?? ''); ?>" 
+                                   value="<?php echo htmlspecialchars($product['file_link'] ?? ''); ?>" 
                                    placeholder="https://drive.google.com/your-file" required>
                             <div class="file-link-hint">
                                 <i class="fas fa-info-circle"></i>
@@ -1110,41 +1210,15 @@ $categories = [
                     </div>
                 </div>
 
-                <!-- Live Preview -->
-                <div class="preview-section">
-                    <h3 class="form-section-title">
-                        <i class="fas fa-eye"></i>
-                        Live Preview
-                    </h3>
-                    <div class="preview-card">
-                        <div class="preview-header">
-                            <div class="preview-icon">
-                                <i class="fas fa-<?php echo $_POST['icon'] ?? 'palette'; ?>"></i>
-                            </div>
-                            <div class="preview-category-badge">
-                                <?php 
-                                $cat = $_POST['category'] ?? 'category';
-                                echo $categories[$cat] ?? ucfirst($cat); 
-                                ?>
-                            </div>
-                        </div>
-                        <h3 class="preview-title"><?php echo htmlspecialchars($_POST['name'] ?? 'Product Name'); ?></h3>
-                        <p class="preview-description"><?php echo htmlspecialchars($_POST['description'] ?? 'Product description will appear here...'); ?></p>
-                        <div class="preview-footer">
-                            <div class="preview-price">Rp <?php echo isset($_POST['price']) ? number_format($_POST['price'], 0, ',', '.') : '0'; ?></div>
-                        </div>
-                    </div>
-                </div>
-
                 <!-- Form Actions -->
                 <div class="form-actions">
-                    <a href="dashboard.php" class="btn btn-secondary">
+                    <a href="manage-products.php" class="btn btn-secondary">
                         <i class="fas fa-arrow-left"></i>
                         Cancel
                     </a>
                     <button type="submit" class="btn btn-primary">
-                        <i class="fas fa-plus"></i>
-                        Add Product
+                        <i class="fas fa-save"></i>
+                        Update Product
                     </button>
                 </div>
             </form>
@@ -1214,57 +1288,19 @@ $categories = [
                 let formatted = new Intl.NumberFormat('id-ID').format(value);
                 input.value = formatted;
             }
-            
-            // Update preview
-            updatePreview();
         }
 
-        // Live preview update
-        const formInputs = document.querySelectorAll('input, textarea, select');
-        const previewElements = {
-            name: document.querySelector('.preview-title'),
-            description: document.querySelector('.preview-description'),
-            price: document.querySelector('.preview-price'),
-            category: document.querySelector('.preview-category-badge'),
-            icon: document.querySelector('.preview-icon i')
-        };
-
-        formInputs.forEach(input => {
-            input.addEventListener('input', updatePreview);
-            input.addEventListener('change', updatePreview);
-        });
-
-        function updatePreview() {
-            // Update name
-            if (previewElements.name) {
-                previewElements.name.textContent = document.querySelector('input[name="name"]').value || 'Product Name';
-            }
-
-            // Update description
-            if (previewElements.description) {
-                previewElements.description.textContent = document.querySelector('textarea[name="description"]').value || 'Product description will appear here...';
-            }
-
-            // Update price
-            if (previewElements.price) {
-                const priceInput = document.querySelector('input[name="price"]');
-                let price = priceInput.value.replace(/[^\d]/g, '') || '0';
-                previewElements.price.textContent = 'Rp ' + new Intl.NumberFormat('id-ID').format(price);
-            }
-
-            // Update category
-            if (previewElements.category) {
-                const categorySelect = document.querySelector('select[name="category"]');
-                const selectedOption = categorySelect.options[categorySelect.selectedIndex];
-                previewElements.category.textContent = selectedOption.text || 'Category';
-            }
-
-            // Update icon
-            if (previewElements.icon) {
-                const selectedIcon = document.querySelector('input[name="icon"]:checked');
-                if (selectedIcon) {
-                    previewElements.icon.className = 'fas fa-' + selectedIcon.value;
-                }
+        // Toggle remove image checkbox
+        function toggleRemoveImage(icon) {
+            const checkbox = icon.parentElement.querySelector('input[type="checkbox"]');
+            checkbox.checked = !checkbox.checked;
+            
+            if (checkbox.checked) {
+                icon.style.color = '#ef4444';
+                icon.style.opacity = '1';
+            } else {
+                icon.style.color = '#94a3b8';
+                icon.style.opacity = '0.5';
             }
         }
 
@@ -1297,8 +1333,16 @@ $categories = [
             fileInfo.classList.remove('active');
         }
 
-        // Initialize preview
-        updatePreview();
+        // Character counter for description
+        const descriptionTextarea = document.querySelector('textarea[name="description"]');
+        const charCount = document.querySelector('.char-count');
+        
+        if (descriptionTextarea && charCount) {
+            descriptionTextarea.addEventListener('input', function() {
+                const remaining = 1000 - this.value.length;
+                charCount.textContent = `Max 1000 characters (${remaining} remaining)`;
+            });
+        }
     </script>
 </body>
 </html>

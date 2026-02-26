@@ -10,8 +10,8 @@ define('SITE_NAME', 'Kreava Digital Store');
 define('SITE_URL', 'http://localhost/digital-store/');
 define('ADMIN_EMAIL', 'admin@kreava.com');
 
-// Session configuration
-session_start();
+// HAPUS atau COMMENT baris ini karena session sudah dimulai di index.php
+// session_start();
 
 // Database connection
 try {
